@@ -8,6 +8,9 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 // Proxy to bypass CORS
 const proxy = "https://corsproxy.io/?";
 
+// OpenWeatherMap API key
+const openWeatherApiKey = "YOUR_API_KEY"; // replace with your key
+
 // Global variables
 let hourlyData = [];
 let balloonTracks = {};
@@ -42,6 +45,23 @@ async function fetchBalloonData() {
   return data24h;
 }
 
+// Fetch wind data for a specific lat/lon
+async function fetchWind(lat, lon) {
+  try {
+    const res = await fetch(
+      `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${openWeatherApiKey}&units=metric`
+    );
+    const data = await res.json();
+    return {
+      speed: data.wind.speed, // m/s
+      deg: data.wind.deg      // degrees
+    };
+  } catch (e) {
+    console.warn("Wind fetch failed", e);
+    return null;
+  }
+}
+
 // Initialize tracks from hourly data
 function buildBalloonTracks() {
   balloonTracks = {};
@@ -62,28 +82,33 @@ function plotPolylines() {
   Object.keys(balloonTracks).forEach((id, idx) => {
     const track = balloonTracks[id].map(p => [p[0], p[1]]);
     const color = `hsl(${(idx * 47) % 360}, 100%, 50%)`;
-
     L.polyline(track, { color, weight: 2 }).addTo(map);
   });
 }
 
-// Update markers for a specific hour
-function updateMarkers(hour) {
+// Update markers for a specific hour (with wind data)
+async function updateMarkers(hour) {
   // Remove existing markers
   markers.forEach(m => map.removeLayer(m));
   markers = [];
 
-  hourlyData[hour].forEach((b, idx) => {
-    const marker = L.circleMarker([b[0], b[1]], {
+  for (let idx = 0; idx < hourlyData[hour].length; idx++) {
+    const b = hourlyData[hour][idx];
+    const lat = b[0], lon = b[1];
+
+    const wind = await fetchWind(lat, lon);
+
+    let popupText = `Balloon #${idx}<br/>Lat: ${lat.toFixed(2)}<br/>Lon: ${lon.toFixed(2)}`;
+    if (wind) popupText += `<br/>Wind: ${wind.speed} m/s at ${wind.deg}°`;
+
+    const marker = L.circleMarker([lat, lon], {
       radius: 5,
       color: `hsl(${(idx * 47) % 360}, 100%, 50%)`,
       fillOpacity: 0.8
-    })
-    .bindPopup(`Balloon #${idx}<br/>Lat: ${b[0].toFixed(2)}<br/>Lon: ${b[1].toFixed(2)}`)
-    .addTo(map);
+    }).bindPopup(popupText).addTo(map);
 
     markers.push(marker);
-  });
+  }
 }
 
 // Fit map to all balloons
@@ -111,14 +136,14 @@ async function init() {
   const slider = document.getElementById("hourSlider");
   const label = document.getElementById("hourLabel");
 
-  slider.addEventListener("input", () => {
+  slider.addEventListener("input", async () => {
     const hour = Number(slider.value);
     label.textContent = `Hour: ${hour}`;
-    updateMarkers(hour);
+    await updateMarkers(hour);
   });
 
   // Initialize at latest hour
-  updateMarkers(hourlyData.length - 1);
+  await updateMarkers(hourlyData.length - 1);
 }
 
 init();
